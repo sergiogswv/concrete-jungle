@@ -4,7 +4,6 @@ import type { FrequencyData } from '../audio/AudioAnalyzer';
 
 interface UseAudioAnalyzerReturn {
   analyzer: AudioAnalyzer | null;
-  frequencyData: FrequencyData | null;
   isPlaying: boolean;
   audioElement: HTMLAudioElement | null;
   loadAudioFile: (file: File) => Promise<void>;
@@ -14,9 +13,12 @@ interface UseAudioAnalyzerReturn {
   toggle: () => void;
 }
 
-export const useAudioAnalyzer = (): UseAudioAnalyzerReturn => {
+interface UseAudioAnalyzerParams {
+  frequencyDataRef?: React.MutableRefObject<FrequencyData | null>;
+}
+
+export const useAudioAnalyzer = (params?: UseAudioAnalyzerParams): UseAudioAnalyzerReturn => {
   const analyzerRef = useRef<AudioAnalyzer | null>(null);
-  const [frequencyData, setFrequencyData] = useState<FrequencyData | null>(null);
   const [isPlaying, setIsPlaying] = useState(false);
   const [audioElement, setAudioElement] = useState<HTMLAudioElement | null>(null);
   const animationFrameRef = useRef<number>();
@@ -39,13 +41,14 @@ export const useAudioAnalyzer = (): UseAudioAnalyzerReturn => {
     if (!analyzerRef.current) return;
 
     const data = analyzerRef.current.getFrequencyData();
-    if (data) {
-      setFrequencyData(data);
+    if (data && params?.frequencyDataRef) {
+      // Actualizar la ref directamente sin causar re-render
+      params.frequencyDataRef.current = data;
     }
 
     // Continuar el loop
     animationFrameRef.current = requestAnimationFrame(updateFrequencyData);
-  }, []);
+  }, [params]);
 
   // Iniciar/detener el loop cuando cambia isPlaying
   useEffect(() => {
@@ -125,7 +128,6 @@ export const useAudioAnalyzer = (): UseAudioAnalyzerReturn => {
 
   return {
     analyzer: analyzerRef.current,
-    frequencyData,
     isPlaying,
     audioElement,
     loadAudioFile,

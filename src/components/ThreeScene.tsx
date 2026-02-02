@@ -17,9 +17,11 @@ const ThreeScene = () => {
   const composerRef = useRef<EffectComposer | null>(null);
   const bloomPassRef = useRef<UnrealBloomPass | null>(null);
 
-  // Audio analyzer
-  const { frequencyData, loadAudioFile, isPlaying, toggle } = useAudioAnalyzer();
+  // Audio analyzer - ref se actualiza directamente sin re-renders
   const audioDataRef = useRef<FrequencyData | null>(null);
+  const { loadAudioFile, isPlaying, toggle } = useAudioAnalyzer({
+    frequencyDataRef: audioDataRef
+  });
 
   // Controles de post-procesado
   const [bloomStrength, setBloomStrength] = useState(1.8);
@@ -28,6 +30,27 @@ const ThreeScene = () => {
   const [emissiveIntensity, setEmissiveIntensity] = useState(1.0);
   const bloomStrengthRef = useRef(bloomStrength);
   const emissiveIntensityRef = useRef(emissiveIntensity);
+
+  // Control de tamaño de ciudad
+  const [cityGridSize, setCityGridSize] = useState(20); // 20x20 = 400 edificios
+
+  // Control de movimiento infinito
+  const [infiniteScroll, setInfiniteScroll] = useState(true);
+  const [scrollSpeed, setScrollSpeed] = useState(0.3);
+  const infiniteScrollRef = useRef(infiniteScroll);
+  const scrollSpeedRef = useRef(scrollSpeed);
+
+  // Control de suavizado de audio (smoothing)
+  const [smoothingFactor, setSmoothingFactor] = useState(0.15);
+  const smoothingFactorRef = useRef(smoothingFactor);
+
+  // Valores suavizados de audio (para lerp)
+  const smoothedAudioRef = useRef({
+    bass: 0,
+    mid: 0,
+    treble: 0,
+    overall: 0
+  });
 
   // Referencias para animación
   const normalBuildingsMeshRef = useRef<THREE.InstancedMesh | null>(null);
@@ -38,11 +61,6 @@ const ThreeScene = () => {
   const magentaBuildingsDataRef = useRef<any[]>([]);
   const specialMaterialsRef = useRef<{ cyan: THREE.MeshStandardMaterial; magenta: THREE.MeshStandardMaterial } | null>(null);
 
-  // Actualizar ref con los datos de frecuencia para acceso en el loop de animación
-  useEffect(() => {
-    audioDataRef.current = frequencyData;
-  }, [frequencyData]);
-
   // Actualizar ref de bloomStrength
   useEffect(() => {
     bloomStrengthRef.current = bloomStrength;
@@ -52,6 +70,21 @@ const ThreeScene = () => {
   useEffect(() => {
     emissiveIntensityRef.current = emissiveIntensity;
   }, [emissiveIntensity]);
+
+  // Actualizar ref de infiniteScroll
+  useEffect(() => {
+    infiniteScrollRef.current = infiniteScroll;
+  }, [infiniteScroll]);
+
+  // Actualizar ref de scrollSpeed
+  useEffect(() => {
+    scrollSpeedRef.current = scrollSpeed;
+  }, [scrollSpeed]);
+
+  // Actualizar ref de smoothingFactor
+  useEffect(() => {
+    smoothingFactorRef.current = smoothingFactor;
+  }, [smoothingFactor]);
 
   // Actualizar parámetros del bloom cuando cambien
   useEffect(() => {
@@ -165,7 +198,7 @@ const ThreeScene = () => {
 
     // Ciudad Brutalista
     const cityGenerator = new CityGenerator({
-      gridSize: 20,           // 20x20 = 400 edificios
+      gridSize: cityGridSize, // Tamaño de cuadrícula ajustable
       spacing: 4,             // 4 unidades entre edificios
       minHeight: 3,           // Altura mínima
       maxHeight: 30,          // Altura máxima
@@ -255,6 +288,7 @@ const ThreeScene = () => {
 
     // Animation loop
     let time = 0;
+    let animationFrameId: number;
     const matrix = new THREE.Matrix4();
     const position = new THREE.Vector3();
     const quaternion = new THREE.Quaternion();
@@ -297,37 +331,63 @@ const ThreeScene = () => {
     }
 
     const animate = () => {
-      requestAnimationFrame(animate);
+      animationFrameId = requestAnimationFrame(animate);
       time += 0.01;
 
       // Obtener datos de audio actualizados
       const audioData = audioDataRef.current;
 
-      // Valores por defecto si no hay audio
-      const bass = audioData?.bass || 0;
-      const mid = audioData?.mid || 0;
-      const treble = audioData?.treble || 0;
-      const overall = audioData?.overall || 0;
+      // Valores raw de audio (sin procesar)
+      const rawBass = audioData?.bass || 0;
+      const rawMid = audioData?.mid || 0;
+      const rawTreble = audioData?.treble || 0;
+      const rawOverall = audioData?.overall || 0;
 
-      // 1. ESCALADO REACTIVO DE EDIFICIOS (BASS)
+      // LERP (Linear Interpolation) para suavizado
+      // Formula: smoothed = smoothed + (target - smoothed) * factor
+      // Factor más bajo = más suavizado (0.05-0.2 recomendado)
+      const lerp = (current: number, target: number, factor: number) => {
+        return current + (target - current) * factor;
+      };
+
+      const smoothing = smoothingFactorRef.current;
+
+      // Aplicar smoothing a todos los valores de audio
+      smoothedAudioRef.current.bass = lerp(smoothedAudioRef.current.bass, rawBass, smoothing);
+      smoothedAudioRef.current.mid = lerp(smoothedAudioRef.current.mid, rawMid, smoothing);
+      smoothedAudioRef.current.treble = lerp(smoothedAudioRef.current.treble, rawTreble, smoothing);
+      smoothedAudioRef.current.overall = lerp(smoothedAudioRef.current.overall, rawOverall, smoothing);
+
+      // Usar valores suavizados en lugar de raw
+      const bass = smoothedAudioRef.current.bass;
+      const mid = smoothedAudioRef.current.mid;
+      const treble = smoothedAudioRef.current.treble;
+      const overall = smoothedAudioRef.current.overall;
+
+      // 1. ESCALADO REACTIVO DE EDIFICIOS (BASS) + MOVIMIENTO INFINITO
       const bassScale = 1 + bass * 0.3; // 1.0 a 1.3x escala
+
+      // Configuración para scroll infinito
+      const distanceThreshold = 40;
+      const respawnDistance = cityGridSize * 4;
 
       // Animar edificios normales
       if (normalBuildingsMeshRef.current && buildingsDataRef.current) {
         const normalBuildings = buildingsDataRef.current.filter(b => !b.isSpecial);
 
-        // Debug (solo una vez)
-        if (time < 0.02) {
-          console.log('Normal buildings count:', normalBuildings.length);
-          console.log('First building data:', normalBuildings[0]);
-        }
-
         normalBuildings.forEach((building, index) => {
+          // Movimiento infinito si está activado
+          if (infiniteScrollRef.current) {
+            building.z += scrollSpeedRef.current;
+            if (building.z > distanceThreshold) {
+              building.z -= respawnDistance;
+            }
+          }
+
           // Escala reactiva con animación sinusoidal suave
           const scaleMultiplier = bassScale + Math.sin(time + index * 0.1) * 0.05;
           const newHeight = building.height * scaleMultiplier;
 
-          // Ajustar posición Y para que el edificio crezca desde el suelo
           position.set(building.x, newHeight / 2, building.z);
           scale.set(building.width, newHeight, building.depth);
 
@@ -341,6 +401,13 @@ const ThreeScene = () => {
       // Animar edificios especiales cyan
       if (cyanBuildingsMeshRef.current && cyanBuildingsDataRef.current.length > 0) {
         cyanBuildingsDataRef.current.forEach((building, index) => {
+          if (infiniteScrollRef.current) {
+            building.z += scrollSpeedRef.current;
+            if (building.z > distanceThreshold) {
+              building.z -= respawnDistance;
+            }
+          }
+
           const scaleMultiplier = bassScale + Math.sin(time * 1.5 + index * 0.2) * 0.08;
           const newHeight = building.height * scaleMultiplier;
 
@@ -357,6 +424,13 @@ const ThreeScene = () => {
       // Animar edificios especiales magenta
       if (magentaBuildingsMeshRef.current && magentaBuildingsDataRef.current.length > 0) {
         magentaBuildingsDataRef.current.forEach((building, index) => {
+          if (infiniteScrollRef.current) {
+            building.z += scrollSpeedRef.current;
+            if (building.z > distanceThreshold) {
+              building.z -= respawnDistance;
+            }
+          }
+
           const scaleMultiplier = bassScale + Math.sin(time * 1.5 + index * 0.2) * 0.08;
           const newHeight = building.height * scaleMultiplier;
 
@@ -392,19 +466,24 @@ const ThreeScene = () => {
         bloomPassRef.current.strength = baseStrength + overall * 1.2;
       }
 
-      // 3. MOVIMIENTO DE CÁMARA (TRAVELLING)
+      // 3. MOVIMIENTO DE CÁMARA
       if (cameraRef.current) {
-        // Movimiento circular suave alrededor de la ciudad
-        const radius = 60;
-        const speed = 0.05;
-        const angle = time * speed;
+        if (infiniteScrollRef.current) {
+          // SCROLL INFINITO: Cámara casi fija con ligero balanceo
+          cameraRef.current.position.set(0, 15, 5);
+          cameraRef.current.position.x = Math.sin(time * 0.2) * 2; // Balanceo sutil
+          cameraRef.current.lookAt(0, 10, -50);
+        } else {
+          // MOVIMIENTO CIRCULAR ORIGINAL
+          const radius = 60;
+          const speed = 0.05;
+          const angle = time * speed;
 
-        cameraRef.current.position.x = Math.cos(angle) * radius;
-        cameraRef.current.position.z = Math.sin(angle) * radius;
-        cameraRef.current.position.y = 25 + Math.sin(time * 0.3) * 5; // Sube y baja suavemente
-
-        // Siempre mirar hacia el centro de la ciudad
-        cameraRef.current.lookAt(0, 10, 0);
+          cameraRef.current.position.x = Math.cos(angle) * radius;
+          cameraRef.current.position.z = Math.sin(angle) * radius;
+          cameraRef.current.position.y = 25 + Math.sin(time * 0.3) * 5;
+          cameraRef.current.lookAt(0, 10, 0);
+        }
       }
 
       // Renderizar con post-procesado
@@ -416,6 +495,11 @@ const ThreeScene = () => {
 
     // Cleanup
     return () => {
+      // Cancelar el loop de animación
+      if (animationFrameId) {
+        cancelAnimationFrame(animationFrameId);
+      }
+
       window.removeEventListener('resize', handleResize);
 
       // Limpiar escena
@@ -446,7 +530,7 @@ const ThreeScene = () => {
       cyanBuildingsMeshRef.current = null;
       magentaBuildingsMeshRef.current = null;
     };
-  }, []);
+  }, [cityGridSize, bloomStrength, bloomThreshold, bloomRadius, emissiveIntensity]);
 
   // Handler para cargar archivo de audio
   const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -540,10 +624,8 @@ const ThreeScene = () => {
               {isPlaying ? '⏸ PAUSE' : '▶ PLAY'}
             </button>
 
-            <div style={{ fontSize: '10px', marginTop: '10px' }}>
-              <div>BASS: {(audioDataRef.current.bass * 100).toFixed(0)}%</div>
-              <div>MID: {(audioDataRef.current.mid * 100).toFixed(0)}%</div>
-              <div>TREBLE: {(audioDataRef.current.treble * 100).toFixed(0)}%</div>
+            <div style={{ fontSize: '10px', marginTop: '10px', opacity: 0.7 }}>
+              Audio reactivo activo ✓
             </div>
           </>
         )}
@@ -572,6 +654,28 @@ const ThreeScene = () => {
         <h3 style={{ margin: 0, fontSize: '14px', color: '#00ffff' }}>
           POST-PROCESSING
         </h3>
+
+        {/* City Grid Size */}
+        <div style={{ borderBottom: '1px solid rgba(255, 0, 255, 0.2)', paddingBottom: '10px', marginBottom: '10px' }}>
+          <label style={{ fontSize: '11px', display: 'block', marginBottom: '5px' }}>
+            CITY SIZE: {cityGridSize}x{cityGridSize} = {cityGridSize * cityGridSize} edificios
+          </label>
+          <input
+            type="range"
+            min="10"
+            max="100"
+            step="5"
+            value={cityGridSize}
+            onChange={(e) => setCityGridSize(parseInt(e.target.value))}
+            style={{
+              width: '100%',
+              accentColor: '#00ffff'
+            }}
+          />
+          <div style={{ fontSize: '9px', marginTop: '5px', opacity: 0.7, color: '#ffaa00' }}>
+            ⚠️ Cambiar recreará la escena
+          </div>
+        </div>
 
         {/* Bloom Strength */}
         <div>
@@ -649,7 +753,62 @@ const ThreeScene = () => {
           />
         </div>
 
-        <div style={{ fontSize: '9px', marginTop: '5px', opacity: 0.7 }}>
+        {/* Audio Smoothing */}
+        <div style={{ borderTop: '1px solid rgba(0, 255, 255, 0.2)', paddingTop: '15px', marginTop: '15px' }}>
+          <label style={{ fontSize: '11px', display: 'block', marginBottom: '5px', color: '#00ffff' }}>
+            AUDIO SMOOTHING: {smoothingFactor.toFixed(2)}
+          </label>
+          <input
+            type="range"
+            min="0.01"
+            max="1"
+            step="0.01"
+            value={smoothingFactor}
+            onChange={(e) => setSmoothingFactor(parseFloat(e.target.value))}
+            style={{
+              width: '100%',
+              accentColor: '#00ffff'
+            }}
+          />
+          <div style={{ fontSize: '9px', marginTop: '5px', opacity: 0.7 }}>
+            Menor = más suave | Mayor = más reactivo
+          </div>
+        </div>
+
+        {/* Infinite Scroll */}
+        <div style={{ borderTop: '1px solid rgba(255, 0, 255, 0.2)', paddingTop: '15px', marginTop: '15px' }}>
+          <label style={{ fontSize: '11px', display: 'flex', alignItems: 'center', marginBottom: '10px', cursor: 'pointer' }}>
+            <input
+              type="checkbox"
+              checked={infiniteScroll}
+              onChange={(e) => setInfiniteScroll(e.target.checked)}
+              style={{ marginRight: '8px', accentColor: '#00ffff' }}
+            />
+            INFINITE SCROLL {infiniteScroll ? '✓' : ''}
+          </label>
+
+          {infiniteScroll && (
+            <div>
+              <label style={{ fontSize: '11px', display: 'block', marginBottom: '5px' }}>
+                SPEED: {scrollSpeed.toFixed(2)}
+              </label>
+              <input
+                type="range"
+                min="0.1"
+                max="2"
+                step="0.1"
+                value={scrollSpeed}
+                onChange={(e) => setScrollSpeed(parseFloat(e.target.value))}
+                style={{
+                  width: '100%',
+                  accentColor: '#00ffff'
+                }}
+              />
+            </div>
+          )}
+        </div>
+
+        <div style={{ fontSize: '9px', marginTop: '10px', opacity: 0.7 }}>
           Tip: Lower threshold = more glow
         </div>
       </div>
