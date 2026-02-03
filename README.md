@@ -62,26 +62,48 @@ npm run build
 - **Vite** - Build tool y dev server
 - **InstancedMesh** - Renderizado optimizado de geometría
 
-## 🏗️ Estructura del Proyecto
+## 🏗️ Estructura del Proyecto (Arquitectura SOLID)
 
 ```
 concrete-jungle/
 ├── src/
-│   ├── components/
-│   │   └── ThreeScene.tsx          # Componente principal de la escena 3D
-│   ├── audio/
-│   │   └── AudioAnalyzer.ts        # Clase para análisis de frecuencias
-│   ├── hooks/
-│   │   └── useAudioAnalyzer.ts     # Hook personalizado para audio
-│   ├── city/
-│   │   ├── CityGenerator.ts        # Generador procedural de ciudad
-│   │   └── materials.ts            # Materiales brutalistas y neón
+│   ├── components/                      # 🎨 Componentes React
+│   │   ├── ThreeScene.tsx              # Componente principal (orquestación)
+│   │   ├── ThreeScene.refactored.tsx   # Versión refactorizada SOLID
+│   │   ├── AudioControls.tsx           # Panel de controles de audio
+│   │   └── PostProcessingControls.tsx  # Panel de efectos visuales
+│   ├── hooks/                          # 🎣 Custom Hooks
+│   │   ├── useAudioAnalyzer.ts         # Hook para Web Audio API
+│   │   ├── useAudioSmoothing.ts        # Hook para suavizado de audio (Lerp)
+│   │   └── useSceneConfig.ts           # Hook para gestión de configuración
+│   ├── utils/                          # 🔧 Utilidades puras
+│   │   ├── animationHelpers.ts         # Funciones de animación (lerp, scale, etc.)
+│   │   └── sceneSetup.ts               # Setup de Three.js (scene, camera, lights)
+│   ├── types/                          # 📘 TypeScript Types
+│   │   └── scene.types.ts              # Interfaces y tipos estrictos
+│   ├── audio/                          # 🎵 Audio Engine
+│   │   └── AudioAnalyzer.ts            # Clase para análisis FFT
+│   ├── city/                           # 🏙️ Generación de Ciudad
+│   │   ├── CityGenerator.ts            # Generador procedural (InstancedMesh)
+│   │   └── materials.ts                # Materiales brutalistas y neón
 │   ├── App.tsx
 │   ├── main.tsx
 │   └── index.css
+├── docs/                               # 📚 Documentación
+│   ├── SOLID_VALIDATION.md             # Validación de principios SOLID
+│   └── ARCHITECTURE.md                 # Diagrama de arquitectura
+├── REFACTORING.md                      # Guía de refactorización
 ├── package.json
 └── README.md
 ```
+
+### 🎯 Principios Aplicados
+
+- ✅ **SOLID**: Cada módulo tiene responsabilidad única
+- ✅ **DRY**: Sin código duplicado
+- ✅ **Clean Code**: Funciones pequeñas (< 30 líneas)
+- ✅ **Type Safety**: TypeScript estricto, 0 tipos `any`
+- ✅ **Performance**: Refs para evitar re-renders innecesarios
 
 ## 🎨 Cómo Funciona
 
@@ -200,6 +222,57 @@ Este visualizador funciona especialmente bien con:
 - **Lo-fi Hip Hop**
 - **Industrial** / EBM
 
+## 🏛️ Arquitectura SOLID
+
+Este proyecto fue refactorizado siguiendo los principios SOLID para máxima mantenibilidad y escalabilidad.
+
+### S - Single Responsibility (Responsabilidad Única)
+Cada módulo tiene **una sola razón para cambiar**:
+- `animationHelpers.ts` - Solo cálculos de animación
+- `sceneSetup.ts` - Solo configuración de Three.js
+- `useAudioSmoothing.ts` - Solo lógica de suavizado
+- `AudioControls.tsx` - Solo UI de controles
+
+### O - Open/Closed (Abierto/Cerrado)
+Extensible sin modificar código existente:
+```typescript
+// Agregar nueva estrategia de cámara sin tocar código existente
+export function calculateOrbitCameraPosition(time, radius, height) { }
+```
+
+### L - Liskov Substitution (Sustitución de Liskov)
+Contratos de interfaces siempre respetados:
+```typescript
+// Cualquier BuildingData cumple el contrato
+interface BuildingData {
+  x: number; y: number; z: number;
+  width: number; height: number; depth: number;
+}
+```
+
+### I - Interface Segregation (Segregación de Interfaces)
+Interfaces específicas, no "gordas":
+```typescript
+// Interfaces pequeñas y focalizadas
+interface AudioSmoothingConfig { bass, mid, treble, overall }
+interface PostProcessingConfig { bloomStrength, bloomThreshold, ... }
+interface SceneConfig { cityGridSize, infiniteScroll, ... }
+```
+
+### D - Dependency Inversion (Inversión de Dependencias)
+Dependencia en abstracciones, no implementaciones:
+```typescript
+// Funciones puras sin dependencias globales
+export function lerp(current, target, factor) { }
+
+// Inyección de dependencias vía props
+<AudioControls onFileUpload={handleFileUpload} />
+```
+
+**Validación completa**: Ver [SOLID_VALIDATION.md](docs/SOLID_VALIDATION.md)
+
+---
+
 ## 📝 Notas de Desarrollo
 
 ### ¿Por qué no React.StrictMode?
@@ -210,6 +283,12 @@ El análisis de audio ocurre a 60 FPS. Usar `useState` causaría 60 re-renders p
 
 ### ¿Por qué no useEffect dependencies para smoothing/scroll?
 Los valores de smoothing y scroll se usan dentro del loop de animación que se ejecuta cada frame. Agregar estas dependencias al useEffect recrearía toda la escena innecesariamente. Las refs sincronizan los valores sin recrear la escena.
+
+### ¿Por qué InstancedMesh?
+Renderizar 10,000 edificios como componentes individuales requeriría 10,000 draw calls. Con InstancedMesh, logramos **solo 3 draw calls** (normal, cyan, magenta) independientemente del número de edificios.
+
+### ¿Por qué funciones puras en utils/?
+Las funciones puras son fáciles de testear, reutilizar y razonar. No tienen efectos secundarios ni dependen de estado global, lo que las hace perfectas para lógica de negocio.
 
 ## 📄 Licencia
 
